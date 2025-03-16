@@ -1,0 +1,136 @@
+name: Open Proxy Checker
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour
+
+jobs:
+  run-proxy-checker:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Create Python Script
+        run: |
+          cat << EOF > proxy_checker.py
+          import concurrent.futures
+          import requests
+          import time
+          from bs4 import BeautifulSoup
+
+          VIDEO_URL = "https://www.youtube.com/"
+
+          def fetch_proxies_proxy_list_download():
+              url = "https://www.proxy-list.download/api/v1/get?type=https"
+              try:
+                  response = requests.get(url, timeout=10)
+                  response.raise_for_status()
+                  proxies = response.text.splitlines()
+                  print(f"proxy-list.download returned {len(proxies)} proxies.")
+                  return proxies
+              except Exception as e:
+                  print(f"Failed to fetch proxies from proxy-list.download: {e}")
+                  return []
+
+          def fetch_proxies_speedx():
+              url = "https://raw.githubusercontent.com/TheSpeedX/PROXY-List/master/http.txt"
+              try:
+                  response = requests.get(url, timeout=10)
+                  response.raise_for_status()
+                  proxies = response.text.splitlines()
+                  print(f"TheSpeedX proxy list returned {len(proxies)} proxies.")
+                  return proxies
+              except Exception as e:
+                  print(f"Failed to fetch proxies from TheSpeedX/PROXY-List: {e}")
+                  return []
+
+          def fetch_proxies_proxyscrape():
+              url = "https://api.proxyscrape.com/?request=displayproxies&proxytype=https"
+              try:
+                  response = requests.get(url, timeout=10)
+                  response.raise_for_status()
+                  proxies = response.text.splitlines()
+                  print(f"ProxyScrape returned {len(proxies)} proxies.")
+                  return proxies
+              except Exception as e:
+                  print(f"Failed to fetch proxies from ProxyScrape: {e}")
+                  return []
+
+          def fetch_proxies_shifty():
+              url = "https://raw.githubusercontent.com/ShiftyTR/Proxy-List/master/proxy.txt"
+              try:
+                  response = requests.get(url, timeout=10)
+                  response.raise_for_status()
+                  proxies = response.text.splitlines()
+                  print(f"Shifty proxy list returned {len(proxies)} proxies.")
+                  return proxies
+              except Exception as e:
+                  print(f"Failed to fetch proxies from ShiftyTR: {e}")
+                  return []
+
+          def test_proxy(proxy):
+              proxies = {
+                  "http": f"http://{proxy}",
+                  "https": f"http://{proxy}"
+              }
+              try:
+                  start_time = time.perf_counter()
+                  response = requests.get(VIDEO_URL, proxies=proxies, timeout=10)
+                  end_time = time.perf_counter()
+                  response_time = end_time - start_time
+                  
+                  # Check if the title of the page is "YouTube"
+                  soup = BeautifulSoup(response.text, "html.parser")
+                  title = soup.title.string.strip() if soup.title else ""
+                  
+                  if title == "YouTube":
+                      return proxy, response.status_code, response_time
+                  return None
+              except requests.exceptions.RequestException:
+                  return None
+
+          def main():
+              proxies1 = fetch_proxies_proxy_list_download()
+              proxies2 = fetch_proxies_speedx()
+              proxies3 = fetch_proxies_proxyscrape()
+              proxies4 = fetch_proxies_shifty()
+
+              all_proxies = set(proxies1 + proxies2 + proxies3 + proxies4)
+              print(f"Total unique proxies fetched: {len(all_proxies)}")
+
+              working_proxies = []
+              max_workers = 100
+              with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+                  futures = {executor.submit(test_proxy, proxy): proxy for proxy in all_proxies}
+                  for future in concurrent.futures.as_completed(futures):
+                      result = future.result()
+                      if result:
+                          working_proxies.append(result)
+                          proxy, status, response_time = result
+                          print(f"Proxy {proxy} is valid: {status} (Response Time: {response_time:.2f} seconds)")
+
+              if not working_proxies:
+                  print("No valid proxies found.")
+
+          if __name__ == "__main__":
+              main()
+          EOF
+
+      - name: Install Dependencies
+        run: pip install requests beautifulsoup4
+
+      - name: Run Proxy Checker
+        run: python proxy_checker.py
